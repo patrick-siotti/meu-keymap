@@ -1,0 +1,11 @@
+import { RotateCcw,RotateCw } from "lucide-react";
+import { HARDWARE_CHANNELS } from "../../lib/hardware-map";
+import type { HardwareMap } from "../../lib/hardware-map";
+interface HardwareMapBoardProps {map:HardwareMap|null;layer:number;selected:number;onSelect:(slot:number)=>void;labels?:Record<number,string>;}
+export function HardwareMapBoard({map,layer,selected,onSelect,labels}:HardwareMapBoardProps) {
+  function entry(slot:number){return labels?.[slot]?{label:labels[slot]}:map?.entries.find(e=>e.layer===layer&&e.slot===slot);}
+  return <div className="calibration-board-wrap hardware-board-wrap"><div className="calibration-board" aria-label="Mapa por código do aparelho">
+    <div className="calibration-keys">{HARDWARE_CHANNELS.slice(0,16).map(c=><button key={c.slot} className={`calibration-key hardware-key ${selected===c.slot?"selected":""}`} aria-label={`${c.label}, código ${c.slot}`} aria-pressed={selected===c.slot} title={`${c.label} · ${labels?.[c.slot]??entry(c.slot)?.label??"Sem leitura"}`} onClick={()=>onSelect(c.slot)}><strong>{String(c.slot).padStart(2,"0")}</strong><code>0x{c.slot.toString(16).toUpperCase().padStart(2,"0")}</code><small>{labels?.[c.slot]??entry(c.slot)?.label??"…"}</small></button>)}</div>
+    <div className="calibration-encoders">{[1,2,3].map(number=><section key={number} className={`calibration-encoder ${number===3?"large":""}`} aria-label={`Encoder ${number}`}><span className="calibration-encoder-label">E{number}</span><div className="calibration-encoder-actions">{HARDWARE_CHANNELS.filter(c=>c.controlId===`knob-${number}`).map(c=><button key={c.slot} className={`${c.trigger==="press"?"calibration-dial":"calibration-turn"} ${selected===c.slot?"selected":""}`} aria-label={`${c.label}, código ${c.slot}`} aria-pressed={selected===c.slot} title={`${c.slot} · ${entry(c.slot)?.label??"Sem leitura"}`} onClick={()=>onSelect(c.slot)}>{c.trigger==="left"?<RotateCcw size={16}/>:c.trigger==="right"?<RotateCw size={16}/>:<span className="dial-mark"/>}</button>)}</div><div className="calibration-encoder-captions">{HARDWARE_CHANNELS.filter(c=>c.controlId===`knob-${number}`).map(c=><span key={c.slot}>{c.slot}</span>)}</div></section>)}</div>
+  </div></div>;
+}
