@@ -1,7 +1,7 @@
 <br>
 
 <p align="center">
-  <img src="public/favicon.svg" alt="Meu Keymap" width="72" height="72">
+  <img src="images/branding/01_icone_transparente.png" alt="Meu Keymap" width="160" height="160">
 </p>
 
 <h1 align="center">Meu Keymap</h1>
