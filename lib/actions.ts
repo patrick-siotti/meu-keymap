@@ -30,6 +30,10 @@ export const actionSchema = z.union([previousActionSchema, commandSchema]);
 export type Action = z.infer<typeof actionSchema>;
 export type CommandAction = z.infer<typeof commandSchema>;
 export function actionLabel(action: Action): string {
+  if (action.kind === "shortcut" && action.whileHeld) {
+    const label = `${previousLabel(action)} · manter pressionado`;
+    return action.whileHeld === true ? label : `${label} e silenciar o som`;
+  }
   return action.kind === "command"
     ? `Script / comando: ${action.path.split(/[\\/]/).pop()}`
     : previousLabel(action);

@@ -15,22 +15,43 @@ export class BrowserSession {
   private cookieName: string;
   private port:number;
   private shutdown:()=>Promise<void>;
+  private canShutdown:()=>boolean;
   private graceMs:number;
   private initialMs:number;
-  constructor(port: number, shutdown: () => Promise<void>, graceMs = 15_000, initialMs = 60_000) {
-    this.port=port;this.shutdown=shutdown;this.graceMs=graceMs;this.initialMs=initialMs;
+  constructor(port: number, shutdown: () => Promise<void>, canShutdown: () => boolean, graceMs = 15_000, initialMs = 60_000) {
+    this.port=port;this.shutdown=shutdown;this.canShutdown=canShutdown;this.graceMs=graceMs;this.initialMs=initialMs;
     this.cookieName = `meu_keymap_tab_${port}`;
-    this.arm(initialMs);
     this.keepalive = setInterval(() => { for (const client of this.clients) client.write(": keepalive\n\n"); }, 5000);
     this.keepalive.unref();
+    this.refreshIdleTimeout();
   }
-  private arm(ms: number) {
+  private clearIdleTimeout() {
     if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.deadline = null;
+  }
+  refreshIdleTimeout() {
+    if (this.closed || this.clients.size) return;
+    if (!this.canShutdown()) {
+      this.clearIdleTimeout();
+      return;
+    }
+    if (this.timer) return;
+    const ms = this.attached ? this.graceMs : this.initialMs;
     this.deadline = Date.now() + ms;
-    this.timer = setTimeout(() => { this.timer = null; this.deadline = null; void this.shutdown().catch(error => console.error("Falha ao encerrar sessão de abas:", error)); }, ms);
+    this.timer = setTimeout(() => {
+      this.clearIdleTimeout();
+      if (!this.canShutdown()) return;
+      this.close();
+      void this.shutdown().catch(error => console.error("Falha ao encerrar sessão de abas:", error));
+    }, ms);
     this.timer.unref();
   }
-  opened() { if (!this.closed && !this.clients.size) this.arm(this.attached ? this.graceMs : this.initialMs); }
+  opened() {
+    if (this.closed || this.clients.size) return;
+    this.clearIdleTimeout();
+    this.refreshIdleTimeout();
+  }
   html(source: string): string {
     for (const [ticket, expiry] of this.tickets) if (expiry < Date.now()) this.tickets.delete(ticket);
     if (this.tickets.size >= 128) this.tickets.delete(this.tickets.keys().next().value!);
@@ -55,15 +76,16 @@ export class BrowserSession {
     }
     const cookie = req.headers.cookie?.split(";").map(value => value.trim()).find(value => value.startsWith(`${this.cookieName}=`))?.slice(this.cookieName.length + 1);
     if (req.method !== "GET" || !cookie || !/^[a-f0-9]{64}$/.test(cookie) || !timingSafeEqual(Buffer.from(cookie), Buffer.from(this.secret))) { deny(); return true; }
-    if (this.timer) clearTimeout(this.timer); this.timer = null; this.deadline = null; this.attached = true;
+    this.clearIdleTimeout();
+    this.attached = true;
     this.clients.add(res);
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
     res.write('retry: 1000\ndata: {"connected":true}\n\n');
-    res.on("close", () => { this.clients.delete(res); if (!this.closed && !this.clients.size) this.arm(this.graceMs); });
+    res.on("close", () => { this.clients.delete(res); this.refreshIdleTimeout(); });
     return true;
   }
   close() {
-    this.closed = true; if (this.timer) clearTimeout(this.timer); clearInterval(this.keepalive); this.timer = null;
+    this.closed = true; this.clearIdleTimeout(); clearInterval(this.keepalive);
     this.tickets.clear(); for (const client of this.clients) client.end(); this.clients.clear();
   }
 }

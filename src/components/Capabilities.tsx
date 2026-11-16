@@ -20,7 +20,7 @@ export function Capabilities({ onClose }: CapabilitiesProps) {
         <h3>Escolher o modo</h3>
         <ul>
           <li><Check size={16} />Direto no aparelho: atalhos, mídia e macros básicas, inclusive com o app fechado.</li>
-          <li><Check size={16} />Automações no Windows: texto, scripts, condições e eventos; requer execução ativa e app aberto.</li>
+          <li><Check size={16} />Com Automações no Windows, texto, scripts, condições e eventos funcionam em segundo plano.</li>
         </ul>
         <h3>LEDs</h3>
         <p>Selecione posições e camadas, escolha a cor e use Gravar LEDs.</p>

@@ -9,6 +9,7 @@ interface EventDetailsProps {
   event: NamedEvent;
   profile: Profile;
   runtimeState: string;
+  liveState: boolean;
   previewResult: string;
   onChange: (event: NamedEvent) => void;
   onRemove: () => void;
@@ -19,6 +20,7 @@ export function EventDetails({
   event,
   profile,
   runtimeState,
+  liveState,
   previewResult,
   onChange,
   onRemove,
@@ -100,7 +102,7 @@ export function EventDetails({
               onClick={() => setSelected(s.id)}
             >
               {s.name}
-              {runtimeState === s.id && <i title="Estado atual na prévia" />}
+              {runtimeState === s.id && <i title={liveState ? "Estado atual em execução" : "Estado atual na prévia"} />}
             </button>
           </div>
         ))}

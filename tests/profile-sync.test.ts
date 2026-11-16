@@ -9,7 +9,7 @@ import { ConfigurationReader } from "../native/configuration.ts";
 import { ApplicationService } from "../native/application.ts";
 import { LocalRuntime } from "../native/runtime.ts";
 import { makeProfile,emptyBehavior,makeRule } from "../lib/model.ts";
-import { bindingPacket } from "../lib/bindings.ts";
+import { bindingPacket, markerPacket } from "../lib/bindings.ts";
 import { profileStamp } from "../lib/profile-stamp.ts";
 import { reconciliationFixture } from "./reconciliation-fixture.ts";
 import { markerKeys } from "../lib/bindings.ts";
@@ -66,4 +66,61 @@ test("unrepresentable device mode fails after saving and never silently changes 
     const result=await sync.sync({version:3,activeProfile:f.profile.id,profiles:[f.profile]},0,"device");
     assert.equal(result.applied,false);assert.equal(result.mode,"device");assert.match(result.error!,/NÃO aplicado/);assert.equal(result.saved.revision,1);assert.equal(f.counters().writes,0);assert.equal(f.runtime.status().active,false);
   }finally{await f.state.close();}
+});
+
+test("mixed save applies native bindings, handles only its markers and restarts without a rewrite", async () => {
+  const fixture = await reconciliationFixture();
+  const store = new ProfileStore(fixture.directory);
+  const synchronizer = new ProfileSynchronizer(store, fixture.application);
+  const profile = fixture.profile;
+  const controls = profile.layers[0]!.controls;
+  const direct = { kind: "shortcut", keys: "Ctrl+C" } as const;
+  const textRule = controls[8]!.rules[0]!;
+  controls[0]!.rules[0]!.behavior.action = direct;
+  textRule.behavior.action = { kind: "text", value: "Primeiro texto" };
+  const document = { version: 3 as const, activeProfile: profile.id, profiles: [profile] };
+  for (const layer of fixture.raw.layers) {
+    layer.reports = layer.reports.map((_, index) => markerPacket(index + 1, layer.layer).replace(/^03FD/, "03FA"));
+  }
+  const pulse = (index: number) => {
+    for (const released of [false, true]) for (const code of markerKeys(index)) {
+      fixture.emit({ type: "input", at: Date.now(), devicePath: "synthetic-keyboard", kind: "keyboard", data: { vkey: code + 20, released, modifiers: 0 } });
+    }
+  };
+  try {
+    fixture.state.start();
+    await new Promise(resolve => setImmediate(resolve));
+    await fixture.state.idle();
+    const result = await synchronizer.sync(document, 0, "mixed");
+    assert.equal(result.applied, true);
+    assert.equal(result.runtimeActive, true);
+    const applied = await fixture.application.status();
+    assert.equal(applied.deployment?.windowsPositions, 1);
+    assert.equal(applied.deviceState?.desired?.mode, "mixed");
+    assert.equal(fixture.raw.layers[0]!.reports[0], bindingPacket(1, 1, direct).replace(/^03FD/, "03FA"));
+    assert.equal(fixture.raw.layers[0]!.reports[8], markerPacket(9, 1).replace(/^03FD/, "03FA"));
+    assert.equal(fixture.raw.layers[0]!.reports[9], bindingPacket(10, 1, { kind: "none" }).replace(/^03FD/, "03FA"));
+    pulse(0);
+    pulse(8);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(fixture.performed, [textRule.behavior.action]);
+    const writeCount = fixture.counters().writes;
+
+    fixture.application.stop();
+    await fixture.application.start();
+    pulse(8);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(fixture.performed.length, 2);
+    textRule.behavior.action = { kind: "text", value: "Texto editado" };
+    const edit = await synchronizer.sync(document, 1, "mixed");
+    assert.equal(edit.applied, true);
+    pulse(8);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(fixture.performed.at(-1), textRule.behavior.action);
+    assert.equal(fixture.counters().writes, writeCount);
+    assert.equal(fixture.counters().rgbWrites, 0);
+  } finally {
+    await fixture.state.close();
+    await fixture.runtime.close();
+  }
 });

@@ -33,6 +33,7 @@ export interface Runtime {
   logs: string[];
   signals: Record<string, Value | null>;
   held: string[];
+  trackedKeys?: readonly string[];
   observed: Observations | null;
   effects?: Action[];
 }
@@ -62,6 +63,7 @@ export function conditionContext(
       profile.events.map((e) => [e.id, eventState(profile, state, e.id)]),
     ),
     held: state.held,
+    trackedKeys: state.trackedKeys,
     signals: state.signals,
     observed: state.observed,
     now,
@@ -348,13 +350,15 @@ export function simulate(
   trigger: Trigger,
   qualifier: Qualifier = { controlId: "", modifiers: [] },
   now = Date.now(),
+  physical = false,
 ): Runtime {
   const state = structuredClone(current),
     control = profile.layers[layer]!.controls.find((c) => c.id === id)!;
   const matches = control.rules.filter(
     (r) =>
       r.trigger === trigger &&
-      r.qualifier.controlId === qualifier.controlId &&
+      (physical ? !r.qualifier.controlId || current.held.includes(r.qualifier.controlId)
+        : r.qualifier.controlId === qualifier.controlId) &&
       r.qualifier.modifiers.length === qualifier.modifiers.length &&
       r.qualifier.modifiers.every((m) => qualifier.modifiers.includes(m)),
   );
@@ -366,7 +370,7 @@ export function simulate(
     log(state, `${controlName(control,profile)} · ${ruleLabel(r, profile)}`);
     run(profile, state, layer, id, r, now, current);
   }
-  if (state.layer !== layer) activate(profile, state, state.layer, now);
+  if (state.layer !== current.layer) activate(profile, state, state.layer, now);
   return state;
 }
 export function simulateRule(
@@ -378,11 +382,17 @@ export function simulateRule(
   now = Date.now(),
 ): Runtime {
   const state = structuredClone(current);
+  if (rule.trigger === "down" || rule.trigger === "hold") {
+    state.held = [...new Set([...state.held, id])];
+  } else if (rule.trigger === "release") {
+    state.held = state.held.filter(controlId => controlId !== id);
+    state.trackedKeys = [...new Set([...(state.trackedKeys ?? []), id])];
+  }
   log(
     state,
     `${controlName(profile.layers[layer]!.controls.find((c) => c.id === id)!,profile)} · ${ruleLabel(rule, profile)}`,
   );
-  run(profile, state, layer, id, rule, now, current);
+  run(profile, state, layer, id, rule, now, { ...current, held: state.held, trackedKeys: state.trackedKeys });
   if (state.layer !== layer) activate(profile, state, state.layer, now);
   return state;
 }

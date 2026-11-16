@@ -1,15 +1,20 @@
 [CmdletBinding()]
 param(
     [ValidateRange(1024, 65535)][int]$Port = 4173,
-    [switch]$SemAbrir
+    [switch]$SemAbrir,
+    [switch]$EmSegundoPlano
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not $SemAbrir) {
+if (-not $SemAbrir -or $EmSegundoPlano) {
     $keymapLauncher = Join-Path $PSScriptRoot 'desktop/bin/MeuKeymap.exe'
     if (-not (Test-Path -LiteralPath $keymapLauncher)) { throw 'Prepare o atalho primeiro: ./desktop/install-desktop.ps1' }
     if ($Port -ne 4173) { throw 'A sessão desktop usa a porta 4173. Para uma porta técnica, use -SemAbrir -Port.' }
-    Start-Process -FilePath $keymapLauncher -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
+    if ($EmSegundoPlano) {
+        Start-Process -FilePath $keymapLauncher -ArgumentList '--background' -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
+    } else {
+        Start-Process -FilePath $keymapLauncher -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
+    }
     return
 }
 $keymapUrl = "http://127.0.0.1:$Port"

@@ -234,7 +234,7 @@ export function Inspector({
                           : "Editar ação"}
                       </span>
                     </button>
-                    {behavior.action.kind === "layer" && mode === "device" && <p className="helper">Trocar camada requer Automações. No modo direto, use o seletor do aparelho.</p>}
+                    {behavior.action.kind === "layer" && mode && mode !== "local" && <p className="helper">Trocar camada por ação exige Automações no Windows. Use o seletor físico nos demais modos.</p>}
                     <button
                       className="library-launch"
                       onClick={() => onLibrary(false, branch)}

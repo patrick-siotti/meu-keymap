@@ -41,6 +41,30 @@ test("every selectable key and modifier combination survives device encoding and
   }
 });
 
+test("modifier-only shortcuts use the existing modifier codes and round-trip without a main key", () => {
+  for (const { name, code, virtualKey } of MODIFIER_OPTIONS) {
+    const keys = buildChord([name], "");
+    assert.equal(keys, name);
+    assert.deepEqual(chordSelection(keys), { modifiers: [name], key: "" });
+    assert.deepEqual(parseChord(keys), { modifiers: [], key: code, virtualKey });
+    const action = { kind: "shortcut", keys } as const;
+    const bytes = packetBytes(bindingPacket(1, 1, action));
+    assert.deepEqual(bytes.slice(4, 12), [1, 0, 1, 0, 0, code, 0, 50]);
+    assert.deepEqual(decodeHardwareAction(bytes), action);
+  }
+  const keys = buildChord(["Ctrl", "RightShift"], "");
+  assert.deepEqual(chordSelection(keys), { modifiers: ["Ctrl", "RightShift"], key: "" });
+  const action = { kind: "shortcut", keys } as const;
+  const bytes = packetBytes(bindingPacket(1, 1, action));
+  assert.deepEqual(bytes.slice(4, 15), [1, 0, 2, 0, 0, 241, 0, 50, 246, 0, 50]);
+  assert.deepEqual(decodeHardwareAction(bytes), action);
+  assert.deepEqual(chordSelection(" control + Meta "), { modifiers: ["Ctrl", "Win"], key: "" });
+  for (const invalid of ["+Shift", "Ctrl++Shift", "Ctrl+Control", "Shift+"]) {
+    assert.throws(() => parseChord(invalid));
+  }
+  assert.throws(() => buildChord([], ""));
+});
+
 test("expanded catalog has valid chords, source/context and preserves established presentation", () => {
   assert.equal(new Set(CATALOG.map(item => item.id)).size, CATALOG.length);
   assert.ok(CATALOG.length > 90);
@@ -72,6 +96,9 @@ test("constructed actions save and reload with custom names/icons and compile in
   const control = profile.layers[0]!.controls[0]!, rule = makeRule("qa-press", "press");
   rule.behavior.action = { kind: "shortcut", keys: buildChord(["Win"], "L") };
   control.rules = [rule]; control.label = "Minha trava"; control.labelMode = "custom"; control.icon = { kind: "library", name: "star" };
+  const modifierRule = makeRule("qa-shift", "press");
+  modifierRule.behavior.action = { kind: "shortcut", keys: buildChord(["RightShift"], "") };
+  profile.layers[0]!.controls[1]!.rules = [modifierRule];
   const saved = await store.save({ ...original.document, activeProfile: profile.id, profiles: [profileSchema.parse(profile)] }, original.revision);
   const loaded = await store.load(), selected = loaded.document.profiles[0]!;
   assert.deepEqual(selected, profile);
@@ -80,7 +107,8 @@ test("constructed actions save and reload with custom names/icons and compile in
   const plan = compileProfile(selected, "device");
   assert.deepEqual(plan.errors, []); assert.equal(plan.packets.length, 75);
   assert.deepEqual(packetBytes(plan.packets[0]!).filter((_, index) => index === 9 || index === 12), [244, 15]);
-  assert.equal(plan.packets.slice(1).every(packet => packetBytes(packet)[6] === 0), true);
+  assert.deepEqual(packetBytes(plan.packets[1]!).slice(4, 12), [1, 0, 1, 0, 0, 246, 0, 50]);
+  assert.equal(plan.packets.slice(2).every(packet => packetBytes(packet)[6] === 0), true);
   assert.equal(controlPresentation(selected.layers[0]!.controls[0]!, selected).customIcon?.kind, "library");
 });
 

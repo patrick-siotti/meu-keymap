@@ -20,19 +20,94 @@ namespace MeuKeymap {
       if(releases.Count>0)SendInput((uint)releases.Count,releases.ToArray(),size);
       throw new InvalidOperationException("SendInput nao completou a acao. Verifique foco e nivel de permissao da janela.");
     }
+    sealed class HeldShortcuts {
+      readonly Dictionary<int,List<int>> slots = new Dictionary<int,List<int>>();
+      readonly Dictionary<int,int> users = new Dictionary<int,int>();
+      readonly HashSet<int> pressed = new HashSet<int>();
+
+      public void Press(int slot, List<int> keys) {
+        if (slots.ContainsKey(slot)) return;
+        var inputs = new List<Input>();
+        var injected = new List<int>();
+        foreach (int key in keys) {
+          if (users.ContainsKey(key) || (GetAsyncKeyState(key) & 0x8000) != 0) continue;
+          inputs.Add(Key(key,false,false));
+          injected.Add(key);
+        }
+        if (inputs.Count > 0) Send(inputs);
+        foreach (int key in injected) pressed.Add(key);
+        foreach (int key in keys) {
+          int count;
+          users.TryGetValue(key,out count);
+          users[key] = count + 1;
+        }
+        slots.Add(slot,keys);
+      }
+
+      public void Release(int slot) {
+        List<int> keys;
+        if (!slots.TryGetValue(slot,out keys)) return;
+        var inputs = new List<Input>();
+        for (int i = keys.Count - 1; i >= 0; i--) {
+          int key = keys[i];
+          if (users[key] == 1 && pressed.Contains(key)) inputs.Add(Key(key,true,false));
+        }
+        if (inputs.Count > 0) Send(inputs);
+        foreach (int key in keys) {
+          if (--users[key] > 0) continue;
+          users.Remove(key);
+          pressed.Remove(key);
+        }
+        slots.Remove(slot);
+      }
+
+      public void Clear() {
+        foreach (int slot in new List<int>(slots.Keys)) {
+          try { Release(slot); }
+          catch (Exception error) { Console.Error.WriteLine(error.Message); }
+        }
+      }
+    }
+
+    static List<int> ReadKeys(Dictionary<string,object> data) {
+      var keys = new List<int>();
+      foreach (object value in (System.Collections.IEnumerable)data["keys"]) {
+        int key = Convert.ToInt32(value);
+        if (key < 1 || key > 254 || keys.Contains(key)) throw new InvalidOperationException("Codigo invalido.");
+        keys.Add(key);
+      }
+      if (keys.Count < 1 || keys.Count > 9) throw new InvalidOperationException("Atalho invalido.");
+      return keys;
+    }
     public static void Run(){
+      Run(new PlaybackMute());
+    }
+
+    public static void Run(PlaybackMute playback){
       var json=new JavaScriptSerializer();Console.WriteLine("{\"ready\":true}");
-      string line;
-      while((line=Console.ReadLine())!=null){
+      var held = new HeldShortcuts();
+      try {
+        string line;
+        while((line=Console.ReadLine())!=null){
         object id=null;
         try{
           var data=json.Deserialize<Dictionary<string,object>>(line);id=data["id"];
           var inputs=new List<Input>();string kind=(string)data["kind"];
           if(kind=="keys"){
-            var keys=new List<object>();foreach(object item in (System.Collections.IEnumerable)data["keys"])keys.Add(item);if(keys.Count<1||keys.Count>9)throw new InvalidOperationException("Atalho invalido.");
             var pressed=new List<int>();
-            foreach(object item in keys){int code=Convert.ToInt32(item);if(code<1||code>254)throw new InvalidOperationException("Codigo invalido.");if((GetAsyncKeyState(code)&0x8000)==0){inputs.Add(Key(code,false,false));pressed.Add(code);}}
+            foreach(int code in ReadKeys(data)){if((GetAsyncKeyState(code)&0x8000)==0){inputs.Add(Key(code,false,false));pressed.Add(code);}}
             for(int i=pressed.Count-1;i>=0;i--)inputs.Add(Key(pressed[i],true,false));
+          }else if(kind=="pressShortcut"){
+            int slot = Convert.ToInt32(data["slot"]);
+            var keys = ReadKeys(data);
+            object mute;
+            try {
+              if (data.TryGetValue("mutePlayback",out mute) && Convert.ToBoolean(mute)) playback.Press(slot);
+            } finally { held.Press(slot,keys); }
+          }else if(kind=="releaseShortcut"){
+            int slot = Convert.ToInt32(data["slot"]);
+            try { held.Release(slot); }
+            finally { playback.Release(slot); }
           }else if(kind=="text"){
             string value=(string)data["text"];if(value.Length>2000)throw new InvalidOperationException("Texto muito longo.");
             foreach(char c in value){inputs.Add(Key(c,false,true));inputs.Add(Key(c,true,true));}
@@ -40,6 +115,11 @@ namespace MeuKeymap {
           if(inputs.Count>0)Send(inputs);
           Console.WriteLine(json.Serialize(new {id=id,ok=true}));
         }catch(Exception error){Console.WriteLine(json.Serialize(new {id=id,ok=false,error=error.Message}));}
+        }
+      } finally {
+        held.Clear();
+        try { playback.Clear(); }
+        catch (Exception error) { Console.Error.WriteLine(error.Message); }
       }
     }
   }

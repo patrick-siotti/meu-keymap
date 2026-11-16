@@ -99,6 +99,7 @@ export type Observations = z.infer<typeof observationsSchema>;
 export interface ConditionContext {
   events: Record<string, string>;
   held: string[];
+  trackedKeys?: readonly string[];
   signals: Record<string, Value | null>;
   observed: Observations | null;
   now: number;
@@ -178,8 +179,10 @@ export function readSource(
   if (source.kind === "event") return context.events[source.eventId] ?? null;
   const key = sourceKey(source);
   if (Object.hasOwn(context.signals, key)) return context.signals[key] ?? null;
-  if (source.kind === "key")
-    return context.held.includes(source.controlId) ? true : null;
+  if (source.kind === "key") {
+    if (context.held.includes(source.controlId)) return true;
+    return context.trackedKeys?.includes(source.controlId) ? false : null;
+  }
   const snapshot = context.observed;
   if (
     !snapshot ||

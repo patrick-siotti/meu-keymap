@@ -8,7 +8,7 @@ import { markerKeys } from "../lib/bindings.ts";
 import type { DeviceEvent } from "../lib/device.ts";
 test("physical verification confirms only the selected real code/layer and resumes inputs without changing bindings",async()=>{
   const directory=await mkdtemp(join(tmpdir(),"keymap-physical-check-"));let listener:((event:DeviceEvent)=>void)|null=null,paused=0,resumed=0;
-  const verifier=new HardwareVerifier(directory,{inventory:async()=>({type:"inventory",at:Date.now(),platform:"win32",devices:[]}),subscribe:()=>{},recent:()=>[],observe:callback=>{listener=callback;return()=>{listener=null;};}},{pauseForVerification:async()=>{paused++;return "fingerprint";},resumeAfterVerification:()=>{resumed++;}});
+  const verifier=new HardwareVerifier(directory,{inventory:async()=>({type:"inventory",at:Date.now(),platform:"win32",devices:[]}),subscribe:()=>{},recent:()=>[],observe:callback=>{listener=callback;return()=>{listener=null;};}},{pauseForVerification:async()=>{paused++;return {fingerprint:"fingerprint",input:{}};},resumeAfterVerification:()=>{resumed++;}});
   const pulse=(index:number)=>{for(const released of [false,true])for(const code of markerKeys(index))listener?.({type:"input",kind:"keyboard",at:Date.now(),devicePath:"test",data:{vkey:code+20,released,modifiers:0}});};
   try{
     await verifier.start();assert.equal(paused,1);await assert.rejects(verifier.start(),/andamento/);assert.equal(resumed,0);

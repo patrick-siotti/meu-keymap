@@ -10,11 +10,11 @@ import { UsbCoordinator } from "../native/usb-coordinator.ts";
 import { fileHash, valueHash } from "../native/recovery-files.ts";
 import { ApplicationService } from "../native/application.ts";
 
-const targetFingerprint = "a6a7d7f2e06bbdc1d3903f4ad39b0cc0cc4c01a3da8ddf3081ff6999c6f8667f";
+const targetFingerprint = "4c4856ce6b81625f864d09685663b0f2ad1ac6fbf69ee52f4c0d0c3f56585ff9";
 test("recovery replays the real 69/6 retention case, stages 12 exact maps, commits device and is idempotent", async () => {
   const f = await bindingsRecoveryFixture();
   try {
-    assert.equal(mapFingerprint(f.map()), "de6e1456ac3bd8a1485cc071a0c6c947c3f9c7d80c80be992202a84587e737c2");
+    assert.equal(mapFingerprint(f.map()), "d1e1e2123b2eb5beb60138151d65035df72710363a8439823e16761d9e85304a");
     const before = await f.state.store.load(), profiles = await f.files.read("profiles.json"), flag = await f.files.read("device-recovery.json");
     const preview = await f.application.prepareBindingsRecovery(f.input);
     assert.equal(preview.steps.length, 12); assert.equal(preview.targetFingerprint, targetFingerprint);

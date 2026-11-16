@@ -13,6 +13,7 @@ import {
   Lightbulb,
 } from "lucide-react";
 import type { KeymapDocument } from "../../lib/model";
+import { APPLICATION_MODES, APPLICATION_MODE_LABELS } from "../../lib/bindings";
 import type { ApplicationMode } from "../../lib/bindings";
 import { ProfileBar } from "./ProfileBar";
 interface AppHeaderProps {
@@ -107,7 +108,12 @@ export function AppHeader({
           <Save size={16} />
         )}
         Salvar e aplicar
-      </button><label className="execution-mode"><select aria-label="Executar perfil em" title="Modo de execução de Salvar e aplicar" value={mode} disabled={saving} onChange={e=>onMode(e.target.value as ApplicationMode)}><option value="local">Automações no Windows</option><option value="device">Direto no aparelho</option></select></label></div></>}
+      </button>
+      <label className="execution-mode">
+        <select aria-label="Executar perfil em" title="Modo de execução de Salvar e aplicar" value={mode} disabled={saving} onChange={e=>onMode(e.target.value as ApplicationMode)}>
+          {APPLICATION_MODES.map(value => <option key={value} value={value}>{APPLICATION_MODE_LABELS[value]}</option>)}
+        </select>
+      </label></div></>}
       <div className="header-tools">
         <nav className="app-navigation" aria-label="Área do aplicativo">
           <button

@@ -14,7 +14,7 @@ if ($Mode -ne 'read' -and $keymapCurrent -and $keymapCurrent -ne $keymapExpected
     throw 'Existe uma entrada MeuKeymap de outro local. Nenhuma alteracao realizada.'
 }
 if ($Mode -eq 'enable') {
-    New-Item -Path $keymapRun -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $keymapRun)) { New-Item -Path $keymapRun | Out-Null }
     New-ItemProperty -LiteralPath $keymapRun -Name $keymapName -Value $keymapExpected -PropertyType String -Force | Out-Null
 }
 if ($Mode -eq 'disable' -and $keymapCurrent) {

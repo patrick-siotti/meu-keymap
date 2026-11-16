@@ -16,6 +16,7 @@ import { controlIconSchema } from "./control-icon.ts";
 import { actionPresentation,primaryRule,usesCustomLabel } from "./action-presentation.ts";
 export const EVENTS = [
   "press",
+  "down",
   "double",
   "hold",
   "release",
@@ -26,6 +27,7 @@ export const EVENTS = [
 export type Trigger = (typeof EVENTS)[number];
 export const EVENT_LABELS: Record<Trigger, string> = {
   press: "Clique",
+  down: "Pressionar",
   double: "Duplo clique",
   hold: "Segurar",
   release: "Soltar",

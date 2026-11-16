@@ -8,7 +8,18 @@ import { setTimeout as delay } from "node:timers/promises";
 import { parseChord,modifierVirtualKeys } from "../lib/keys.ts";
 import type { Action,CommandAction } from "../lib/model.ts";
 import { ChildLifecycle } from "./child-lifecycle.ts";
-export interface ActionExecutor {start():Promise<void>;execute(action:Action,signal:AbortSignal):Promise<string>;stop():void;close?():Promise<void>;}
+export interface ActionExecutor {
+  start(): Promise<void>;
+  execute(action: Action, signal: AbortSignal): Promise<string>;
+  pressShortcut?(slot: number, keys: string, mutePlayback?: boolean): Promise<void>;
+  releaseShortcut?(slot: number): Promise<void>;
+  stop(): void;
+  close?(): Promise<void>;
+}
+function virtualKeys(keys: string) {
+  const chord = parseChord(keys);
+  return [...chord.modifiers.map(modifier => modifierVirtualKeys[modifier]!), chord.virtualKey];
+}
 const absolutePath=(value:string)=>win32.isAbsolute(value)&&(/^[A-Za-z]:[\\/]/.test(value)||/^\\\\[^\\/]+[\\/][^\\/]+[\\/]/.test(value));
 export async function commandSpec(action:CommandAction):Promise<{file:string;args:string[];verbatim:boolean;input?:string}> {
   if(!absolutePath(action.path)||!(await stat(action.path)).isFile())throw new Error("Escolha um arquivo existente com caminho absoluto.");
@@ -49,30 +60,46 @@ export async function runCommand(action:CommandAction,signal:AbortSignal):Promis
 export class WindowsExecutor implements ActionExecutor {
   private children=new ChildLifecycle();
   private worker:ChildProcessWithoutNullStreams|null=null;
-  private requests=new Map<string,{resolve:()=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
-  start():Promise<void>{
+  private requests=new Map<string,{worker:ChildProcessWithoutNullStreams;resolve:()=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
+  async start():Promise<void>{
+    if(this.worker)return;
+    await this.children.close();
     if(this.worker)return Promise.resolve();
     return new Promise((resolve,reject)=>{
       const worker=spawn("powershell.exe",["-NoProfile","-NonInteractive","-File",fileURLToPath(new URL("./action-host.ps1",import.meta.url))],{windowsHide:true,stdio:"pipe"});this.worker=worker;
       this.children.track(worker);
       let buffer="",ready=false;
-      const timeout=setTimeout(()=>{this.stop();reject(new Error("Executor Windows não iniciou."));},10000);
+      const timeout=setTimeout(()=>{worker.kill();reject(new Error("Executor Windows não iniciou."));},10000);
       worker.stdout.setEncoding("utf8");worker.stdout.on("data",(chunk:string)=>{buffer+=chunk;if(buffer.length>100000){this.stop();return;}let end:number;while((end=buffer.indexOf("\n"))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);try{const result=JSON.parse(line);if(result.ready){ready=true;clearTimeout(timeout);resolve();}else{const pending=this.requests.get(result.id);if(pending){clearTimeout(pending.timer);this.requests.delete(result.id);if(result.ok)pending.resolve();else pending.reject(new Error(result.error));}}}catch{}}});
-      const failed=()=>{clearTimeout(timeout);if(this.worker===worker)this.worker=null;for(const request of this.requests.values()){clearTimeout(request.timer);request.reject(new Error("Executor Windows encerrou."));}this.requests.clear();if(!ready)reject(new Error("Não foi possível iniciar o executor Windows."));};
-      worker.on("error",failed);worker.on("exit",failed);worker.stderr.on("data",()=>{});
+      const failed=()=>{clearTimeout(timeout);if(this.worker===worker)this.worker=null;for(const [id, request] of this.requests){if(request.worker!==worker)continue;clearTimeout(request.timer);this.requests.delete(id);request.reject(new Error("Executor Windows encerrou."));}if(!ready)reject(new Error("Não foi possível iniciar o executor Windows."));};
+      worker.on("error",failed);worker.on("close",failed);worker.stdin.on("error",failed);worker.stderr.on("data",()=>{});
     });
   }
-  private async send(payload:Record<string,unknown>,signal:AbortSignal){
-    signal.throwIfAborted();if(!this.worker)throw new Error("Executor Windows parado.");
-    const id=randomUUID();await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>{this.requests.delete(id);reject(new Error("Executor não confirmou a ação."));},3000);this.requests.set(id,{resolve,reject,timer});this.worker!.stdin.write(JSON.stringify({id,...payload})+"\n");});signal.throwIfAborted();
+  private async send(payload:Record<string,unknown>,signal?:AbortSignal){
+    signal?.throwIfAborted();const worker=this.worker;if(!worker)throw new Error("Executor Windows parado.");
+    const id=randomUUID();await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>{this.requests.delete(id);reject(new Error("Executor não confirmou a ação."));},3000);this.requests.set(id,{worker,resolve,reject,timer});worker.stdin.write(JSON.stringify({id,...payload})+"\n");});signal?.throwIfAborted();
+  }
+  async pressShortcut(slot: number, keys: string, mutePlayback = false) {
+    await this.send({ kind: "pressShortcut", slot, keys: virtualKeys(keys), mutePlayback });
+  }
+  async releaseShortcut(slot: number) {
+    await this.send({ kind: "releaseShortcut", slot });
   }
   async execute(action:Action,signal:AbortSignal):Promise<string>{
     if(action.kind==="command")return runCommand(action,signal);
     if(action.kind==="text")await this.send({kind:"text",text:action.value},signal);
     if(action.kind==="media")await this.send({kind:"keys",keys:[({mute:173,volumeDown:174,volumeUp:175,next:176,previous:177,playPause:179})[action.command]]},signal);
-    if(action.kind==="shortcut"||action.kind==="macro")for(const step of action.kind==="shortcut"?[{keys:action.keys,delay:0}]:action.steps){const chord=parseChord(step.keys);await this.send({kind:"keys",keys:[...chord.modifiers.map(m=>modifierVirtualKeys[m]!),chord.virtualKey]},signal);if(step.delay)await delay(step.delay,undefined,{signal});}
+    if(action.kind==="shortcut"||action.kind==="macro")for(const step of action.kind==="shortcut"?[{keys:action.keys,delay:0}]:action.steps){await this.send({kind:"keys",keys:virtualKeys(step.keys)},signal);if(step.delay)await delay(step.delay,undefined,{signal});}
     return "Ação enviada ao Windows.";
   }
-  stop(){const worker=this.worker;this.worker=null;worker?.stdin.end();worker?.kill();}
+  stop(){
+    const worker=this.worker;
+    this.worker=null;
+    if (!worker) return;
+    worker.stdin.end();
+    const deadline=setTimeout(()=>worker.kill(),5000);
+    deadline.unref();
+    worker.once("close",()=>clearTimeout(deadline));
+  }
   async close(){this.stop();await this.children.close();}
 }

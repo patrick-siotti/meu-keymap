@@ -1495,7 +1495,7 @@ svg {
 .hardware-map-date { display: block; color: var(--muted); font-size: 10px; margin-top: 8px; }
 .hardware-address { display: block; color: var(--muted); font-size: 10px; margin-top: 5px; }
 .application-content { padding: 0 24px 24px; }
-.application-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 4px 0 18px; }
+.application-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 4px 0 18px; }
 .application-modes button { display: flex; flex-direction: column; gap: 10px; text-align: left; padding: 16px; border: 1px solid #46414d; border-radius: 8px; background: #252328; color: #c9c4cf; }
 .application-modes button.active { border-color: #bba4d0; background: #342c3c; color: #eadcf5; }
 .application-modes strong { font-size: 13px; }

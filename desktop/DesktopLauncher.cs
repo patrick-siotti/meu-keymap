@@ -4,6 +4,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -53,19 +54,23 @@ namespace MeuKeymapDesktop
                     false, 0x00000004 | 0x08000000 | 0x00000400, env, cwd, ref startup, out child)) throw new Win32Exception();
             }
             finally { Marshal.FreeHGlobal(env); }
+            Process process = null;
             try
             {
                 if (!Native.AssignProcessToJobObject(handle, child.Process))
-                {
-                    Native.TerminateProcess(child.Process, 1);
                     throw new Win32Exception();
-                }
+                process = Process.GetProcessById((int)child.ProcessId);
+                // Retain a handle while the child is alive so ExitCode is available after shutdown.
+                if (process.Handle == IntPtr.Zero) throw new Win32Exception();
                 if (Native.ResumeThread(child.Thread) == UInt32.MaxValue)
-                {
-                    Native.TerminateProcess(child.Process, 1);
                     throw new Win32Exception();
-                }
-                return Process.GetProcessById((int)child.ProcessId);
+                return process;
+            }
+            catch
+            {
+                Native.TerminateProcess(child.Process, 1);
+                if (process != null) process.Dispose();
+                throw;
             }
             finally { Native.CloseHandle(child.Thread); Native.CloseHandle(child.Process); }
         }
@@ -111,8 +116,24 @@ namespace MeuKeymapDesktop
             request.Proxy = null; request.Timeout = 2500; request.ReadWriteTimeout = 2500; request.Method = method;
             if (token != null) request.Headers["x-keymap-desktop-token"] = token;
             if (method == "POST") request.ContentLength = 0;
-            using (var response = request.GetResponse())
-            using (var reader = new StreamReader(response.GetResponseStream())) return Json.Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
+            try
+            {
+                using (var response = request.GetResponse())
+                using (var reader = new StreamReader(response.GetResponseStream()))
+                    return Json.Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
+            }
+            catch (WebException error)
+            {
+                using (var response = error.Response as HttpWebResponse)
+                {
+                    if (response == null || response.StatusCode != HttpStatusCode.Conflict) throw;
+                    using (var reader = new StreamReader(response.GetResponseStream()))
+                    {
+                        var reply = Json.Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
+                        throw new InvalidOperationException(Convert.ToString(reply["error"]), error);
+                    }
+                }
+            }
         }
         private static bool SamePath(object value, string expected)
         { return String.Equals(Path.GetFullPath(Convert.ToString(value)), Path.GetFullPath(expected), StringComparison.OrdinalIgnoreCase); }
@@ -166,7 +187,9 @@ namespace MeuKeymapDesktop
         [STAThread]
         private static int Main(string[] args)
         {
-            string settings = args.Length == 2 && args[0] == "--config" ? Path.GetFullPath(args[1]) : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "launcher.json");
+            bool background = args.Contains("--background");
+            int configIndex = Array.IndexOf(args, "--config");
+            string settings = configIndex >= 0 && configIndex + 1 < args.Length ? Path.GetFullPath(args[configIndex + 1]) : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "launcher.json");
             try
             {
                 config = Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(settings));
@@ -181,15 +204,15 @@ namespace MeuKeymapDesktop
                 {
                     bool acquired;
                     try { acquired = mutex.WaitOne(0); } catch (AbandonedMutexException) { acquired = true; }
-                    if (!acquired) { focus.Set(); return 0; }
-                    try { Run(focus); } finally { mutex.ReleaseMutex(); }
+                    if (!acquired) { if (!background) focus.Set(); return 0; }
+                    try { Run(focus, background); } finally { mutex.ReleaseMutex(); }
                 }
                 return 0;
             }
             catch (Exception error)
             {
                 if (logPath != null) try { Log("failure", new { error = error.Message }); } catch { }
-                if (config == null || Arg("openBrowser", "true") != "false") MessageBox.Show(error.Message + "\n\nConfira .desktop/launcher.jsonl no projeto.", "Meu Keymap", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                if (!background && (config == null || Arg("openBrowser", "true") != "false")) MessageBox.Show(error.Message + "\n\nConfira .desktop/launcher.jsonl no projeto.", "Meu Keymap", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 1;
             }
         }
@@ -202,7 +225,60 @@ namespace MeuKeymapDesktop
                 Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
             Log("browser-open-requested", new { port, shell = Arg("openBrowser", "true") != "false" });
         }
-        private static void Run(EventWaitHandle focus)
+        private static void ReportTrayError(string operation, Exception error)
+        {
+            Log(operation, new { error = error.Message });
+            if (Arg("openBrowser", "true") != "false")
+                MessageBox.Show(error.Message, "Meu Keymap", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        private static void RunTray(EventWaitHandle focus)
+        {
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+            Application.EnableVisualStyles();
+            // The Windows message loop handles the tray and keeps supervision on the launcher thread.
+            using (var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath))
+            using (var menu = new ContextMenuStrip())
+            using (var tray = new NotifyIcon { Icon = icon, Text = "Meu Keymap", ContextMenuStrip = menu })
+            using (var monitor = new System.Windows.Forms.Timer { Interval = 200 })
+            {
+                var open = menu.Items.Add("Abrir Meu Keymap");
+                var exit = menu.Items.Add("Sair");
+                Stopwatch closing = null;
+                Action reopen = () =>
+                {
+                    if (closing != null || !Alive(server)) return;
+                    try { OpenBrowser(); }
+                    catch (Exception error) { if (Alive(server)) ReportTrayError("tray-open-failed", error); }
+                };
+                open.Click += (sender, args) => reopen();
+                tray.MouseDoubleClick += (sender, args) => { if (args.Button == MouseButtons.Left) reopen(); };
+                exit.Click += (sender, args) =>
+                {
+                    if (closing != null || !Alive(server)) return;
+                    try
+                    {
+                        Http("/api/desktop/shutdown", Convert.ToString(descriptor["token"]), "POST");
+                        closing = Stopwatch.StartNew();
+                        open.Enabled = exit.Enabled = false;
+                    }
+                    catch (Exception error) { if (Alive(server)) ReportTrayError("tray-exit-failed", error); }
+                };
+                int ticks = 0;
+                monitor.Tick += (sender, args) =>
+                {
+                    if (!Alive(server)) { Application.ExitThread(); return; }
+                    if (closing != null && closing.ElapsedMilliseconds >= 15000)
+                        throw new Exception("O Meu Keymap não confirmou o encerramento no prazo.");
+                    if (focus.WaitOne(0)) reopen();
+                    if (++ticks % 10 == 0) SaveState("ready");
+                };
+                tray.Visible = true;
+                Log("tray-started", new { serverPid = server.Id });
+                monitor.Start();
+                Application.Run();
+            }
+        }
+        private static void Run(EventWaitHandle focus, bool background)
         {
             string node = Arg("node", ""), data = Path.GetFullPath(Arg("dataDirectory", Path.Combine(root, ".data")));
             if (!File.Exists(node)) throw new Exception("Node.js não encontrado. Execute install-desktop.ps1 novamente.");
@@ -214,7 +290,7 @@ namespace MeuKeymapDesktop
                 try
                 {
                     string token = RandomToken();
-                    server = serverJob.Start(node, OwnedJob.Quote(Path.Combine(root, "server.ts")) + " --production --desktop --port " + port + " --data-dir " + OwnedJob.Quote(data), root,
+                    server = serverJob.Start(node, OwnedJob.Quote(Path.Combine(root, "server.ts")) + " --production --desktop --port " + port + " --data-dir " + OwnedJob.Quote(data) + (background ? " --background" : ""), root,
                         new Dictionary<string, string> { { "KEYMAP_DESKTOP_TOKEN", token } });
                     var deadline = DateTime.UtcNow.AddSeconds(35);
                     while (DateTime.UtcNow < deadline)
@@ -225,15 +301,10 @@ namespace MeuKeymapDesktop
                         Thread.Sleep(150);
                     }
                     if (descriptor == null) throw new Exception("O servidor não respondeu no prazo.");
-                    OpenBrowser();
-                    Log("ready", new { serverPid = server.Id, browserOwnership = false, graceSeconds = 15, initialSeconds = 60 });
+                    if (!background) OpenBrowser();
+                    Log("ready", new { serverPid = server.Id, background, browserOwnership = false, graceSeconds = 15, initialSeconds = 60 });
                     SaveState("ready");
-                    int ticks = 0;
-                    while (Alive(server))
-                    {
-                        if (focus.WaitOne(200) && Alive(server)) OpenBrowser();
-                        if (++ticks % 10 == 0) SaveState("ready");
-                    }
+                    RunTray(focus);
                     Log("server-exited", new { serverPid = server.Id, exitCode = server.ExitCode });
                     if (server.ExitCode != 0) throw new Exception("O servidor encerrou com erro. Os processos próprios foram encerrados; reabra pelo atalho.");
                 }
@@ -254,6 +325,7 @@ namespace MeuKeymapDesktop
                     if (server != null) server.WaitForExit(5000);
                     SaveState("closed");
                     Log("closed", new { serverExited = !Alive(server) });
+                    if (server != null) server.Dispose();
                 }
             }
         }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MODIFIER_OPTIONS } from "./keys.ts";
 import { actionLabel,actionSchema,makeProfile,makeRule } from "./model.ts";
 import type { Action,Profile,Trigger } from "./model.ts";
 export const HARDWARE_CHANNELS=Array.from({length:25},(_,i)=>{
@@ -13,6 +14,7 @@ export function hardwareAddress(controlId:string,trigger:Trigger,layer:number):{
 const reportHex=z.string().regex(/^(?:[0-9A-F]{2}){64,65}$/);
 export const rawConfigurationSchema=z.object({at:z.number().int().positive(),devicePath:z.string().max(4096),identity:reportHex,layers:z.array(z.object({layer:z.number().int().min(1).max(3),reports:z.array(reportHex).length(25)})).length(3),error:z.null()});
 const hexBytes=(hex:string)=>hex.match(/../g)!.map(b=>parseInt(b,16));
+const modifierNames = new Map(MODIFIER_OPTIONS.map(({ code, name }) => [code, name]));
 function usageName(code:number):string|null {
   if(code>=4&&code<=29)return String.fromCharCode(65+code-4);
   if(code>=30&&code<=38)return String(code-29);
@@ -28,10 +30,11 @@ export function decodeHardwareAction(bytes:number[]):Action|null {
   if(count===0)return bytes.slice(9).every(b=>b===0)?{kind:"none"}:null;
   if(count>18)return null;
   const codes=Array.from({length:count},(_,i)=>bytes[9+3*i]!);
-  const modifierNames:Record<number,string>={241:"Ctrl",242:"Shift",243:"Alt",244:"Win",245:"RightCtrl",246:"RightShift",247:"RightAlt",248:"RightWin"};
-  const last=codes.at(-1)!,name=usageName(last);
-  if(!name||codes.slice(0,-1).some(code=>!modifierNames[code]))return null;
-  return {kind:"shortcut",keys:[...codes.slice(0,-1).map(code=>modifierNames[code]!),name].join("+")};
+  const last=codes.at(-1)!,name=usageName(last)??modifierNames.get(last);
+  const modifiers = codes.slice(0,-1).map(code=>modifierNames.get(code));
+  if(!name||modifiers.some(modifier=>!modifier))return null;
+  if(modifierNames.has(last) && new Set([...modifiers, name]).size !== codes.length)return null;
+  return {kind:"shortcut",keys:[...modifiers,name].join("+")};
 }
 export interface HardwareEntry {slot:number;layer:number;raw:string;label:string;action:Action|null;mode:number;}
 export interface HardwareMap {version:1;readAt:number;devicePath:string;protocolVersion:number;entries:HardwareEntry[];backup:string;}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { EventState, Profile } from "../../lib/model";
-import { conditionCount } from "../../lib/conditions";
+import { conditionCount, conditionSources } from "../../lib/conditions";
 import { ConditionEditor } from "./ConditionEditor";
 import { StateReactions } from "./StateReactions";
 interface StateConditionalEffectsProps {
@@ -50,7 +50,9 @@ export function StateConditionalEffects({
       </nav>
       {flow === "if" ? (
         <div className="state-condition-panel">
-          <p className="helper">Só entra neste estado se as condições forem atendidas. Senão, mantém o estado atual e executa o outro ramo.</p>
+          <p className="helper">As condições são avaliadas quando um gatilho tenta mudar para este estado.</p>
+          {conditionSources(state.condition).some(source => source.kind === "key") &&
+            <p className="helper">Para mudar de estado ao apertar ou soltar, use os gatilhos Pressionar e Soltar na aba Teclas.</p>}
           <ConditionEditor
             condition={state.condition}
             profile={profile}

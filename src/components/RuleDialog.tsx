@@ -29,8 +29,8 @@ export function RuleDialog({
     [modifiers, setModifiers] = useState<Qualifier["modifiers"]>([]);
   const available: Trigger[] =
     control.kind === "key"
-      ? ["press", "double", "hold", "release", "activate"]
-      : ["left", "press", "right", "double", "hold", "release", "activate"];
+      ? ["press", "double", "down", "hold", "release", "activate"]
+      : ["left", "press", "right", "double", "activate"];
   const valid =
     combination === "none" ||
     trigger === "activate" ||
@@ -73,6 +73,9 @@ export function RuleDialog({
             ))}
           </select>
         </label>
+        {trigger === "hold" && <p className="helper">Dispara uma vez após 400 ms com a tecla pressionada.</p>}
+        {(trigger === "down" || trigger === "release") &&
+          <p className="helper">Em Então → Evento, escolha o estado que esta tecla deve ativar.</p>}
         {trigger !== "activate" && (
           <>
             <label className="field">

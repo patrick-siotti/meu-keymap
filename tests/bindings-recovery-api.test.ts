@@ -63,7 +63,7 @@ test("recovery HTTP endpoints accept only typed prepare/token and maintain 409 g
     const status = await (await fetch(base + "/api/application/status")).json();
     assert.equal(status.bindingsRecovery.phase, "complete"); assert.equal(status.deployment.mode, "device"); assert.equal(status.runtime.active, false);
     assert.equal(status.hardware.matches, true); assert.equal(status.deviceState.policy.enabled, true);
-    assert.equal(mapFingerprint(f.map()), "a6a7d7f2e06bbdc1d3903f4ad39b0cc0cc4c01a3da8ddf3081ff6999c6f8667f");
+    assert.equal(mapFingerprint(f.map()), "4c4856ce6b81625f864d09685663b0f2ad1ac6fbf69ee52f4c0d0c3f56585ff9");
     // Maintenance is temporary. Saving a draft resumes after successful completion.
     assert.equal((await call("/api/profiles", { revision: envelope.revision, document: envelope.document }, "PUT")).status, 200);
   } finally {

@@ -1,8 +1,8 @@
 {
-  "source": "Synthetic test metadata with protocol packets replayed only by in-memory transports",
+  "source": "Archived 2026-10-26 readbacks, replayed only by in-memory transports",
   "baseline": {
     "at": 1793051471897,
-    "devicePath": "synthetic-keymap-test-device",
+    "devicePath": "\\\\?\\HID#VID_514C&PID_8850&MI_00#9&21d5e3a9&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}",
     "identity": "03FB10030B120602120602120602120602120602120602120602120602120602120602120602120602120602120602120602120000000000000000000000000000",
     "layers": [
       {
@@ -100,7 +100,7 @@
   },
   "original": {
     "at": 1793051268614,
-    "devicePath": "synthetic-keymap-test-device",
+    "devicePath": "\\\\?\\HID#VID_514C&PID_8850&MI_00#9&21d5e3a9&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}",
     "identity": "03FB10030B120602120602120602120602120602120602120602120602120602120602120602120602120602120602120602120000000000000000000000000000",
     "layers": [
       {
@@ -198,11 +198,11 @@
   },
   "profile": {
     "id": "principal",
-    "name": "Perfil de teste",
+    "name": "Meu dia a dia",
     "events": [],
     "layers": [
       {
-        "name": "Camada 1",
+        "name": "Principal",
         "controls": [
           {
             "id": "key-1",
@@ -1724,7 +1724,7 @@
         ]
       },
       {
-        "name": "Camada 2",
+        "name": "Criação",
         "controls": [
           {
             "id": "key-1",
@@ -3843,7 +3843,7 @@
         ]
       },
       {
-        "name": "Camada 3",
+        "name": "Livre",
         "controls": [
           {
             "id": "key-1",

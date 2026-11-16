@@ -29,6 +29,7 @@ import { ReconciliationService } from "./native/reconciliation.ts";
 import { StateConflict } from "./lib/device-state.ts";
 import { DesktopControl } from "./native/desktop-control.ts";
 import { bindingsRecoveryInputSchema } from "./lib/bindings-recovery.ts";
+import { isApplicationMode } from "./lib/bindings.ts";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 class HttpError extends Error {
@@ -141,7 +142,7 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 export function createApiHandler(
   store: ProfileStore,
   device: DeviceConnection = new DeviceBridge(),
-  options:{configuration?:ConfigurationReader;rgb?:RgbService;runtime?:LocalRuntime;desktop?:boolean}={},
+  options:{configuration?:ConfigurationReader;rgb?:RgbService;runtime?:LocalRuntime;desktop?:boolean;background?:boolean}={},
 ) {
   const obs=new ObsSource();
   const signals = new SignalHub(obs);
@@ -265,9 +266,9 @@ export function createApiHandler(
           else if(req.url==="/api/application/verify")send(res,200,await application.verify());
           else if(req.url==="/api/runtime/stop")send(res,200,application.stop());
           else if(req.url==="/api/application/prepare"){
-            if(!("profile" in body)||!("mode" in body)||(body.mode!=="device"&&body.mode!=="local"))throw new Error("Perfil e modo obrigatórios.");
+            if(!("profile" in body)||!("mode" in body)||!isApplicationMode(body.mode))throw new Error("Perfil e modo obrigatórios.");
             const parsed=profileSchema.safeParse(body.profile);if(!parsed.success)throw new Error("Perfil inválido.");
-            send(res,200,await application.prepare(parsed.data,body.mode as "device"|"local"));
+            send(res,200,await application.prepare(parsed.data,body.mode));
           }else if(req.url==="/api/application/apply"){
             if(!("token" in body)||typeof body.token!=="string")throw new Error("Prepare o perfil antes de aplicar.");
             send(res,200,await application.apply(body.token));
@@ -327,8 +328,12 @@ export function createApiHandler(
             `Configuração inválida: ${parsed.error.issues[0]?.message??"confira perfis, camadas, controles e estados."}`,
           );
         const mode="mode" in body?body.mode:undefined;
-        if(req.url==="/api/profiles/sync"&&mode!=="device"&&mode!=="local")throw new HttpError(400,"Escolha onde executar o perfil antes de salvar e aplicar.");
-        send(res, 200, req.url==="/api/profiles/sync"?await synchronizer.sync(parsed.data,Number(body.revision),mode as "device"|"local"):await store.save(parsed.data, Number(body.revision)));
+        if (req.url === "/api/profiles/sync") {
+          if (!isApplicationMode(mode)) throw new HttpError(400, "Escolha onde executar o perfil antes de salvar e aplicar.");
+          send(res, 200, await synchronizer.sync(parsed.data, Number(body.revision), mode));
+        } else {
+          send(res, 200, await store.save(parsed.data, Number(body.revision)));
+        }
       } else throw new HttpError(404, "Rota não encontrada.");
     } catch (error) {
       const status = error instanceof HttpError||error instanceof StateConflict ? error.status : 500;
@@ -346,15 +351,26 @@ export function createApiHandler(
     void operation.finally(()=>pending.delete(operation));return operation;
   };
   let shutdown:Promise<void>|null=null;
-  return Object.assign(handler,{start:()=>state.start(),desktopStatus:async()=>({runtime:runtime.status(),application:await application.status()}),close:()=>shutdown??=(async()=>{
-    closing=true;application.stop();
-    await verification.close();
-    await state.close();
-    await runtime.close();
-    await Promise.allSettled([...pending]);
-    await Promise.all([signals.close(),device.close?.()]);
-    obs.close();
-  })(),state});
+  return Object.assign(handler, {
+    start: () => state.start(options.background ? map => application.startOnLogin(map) : undefined),
+    canShutdownWithoutTabs: () => !options.background && pending.size === 0 && !runtime.status().active,
+    beginDesktopShutdown: () => {
+      if (pending.size) return false;
+      closing = true;
+      return true;
+    },
+    desktopStatus: async () => ({ runtime: runtime.status(), application: await application.status() }),
+    close: () => shutdown ??= (async () => {
+      closing = true; application.stop();
+      await verification.close();
+      await state.close();
+      await runtime.close();
+      await Promise.allSettled([...pending]);
+      await Promise.all([signals.close(), device.close?.()]);
+      obs.close();
+    })(),
+    state,
+  });
 }
 async function main() {
   const production = process.argv.includes("--production");
@@ -368,9 +384,10 @@ async function main() {
       ? resolve(ROOT, process.argv[dataIndex + 1] ?? "outputs/ui-test-data")
       : join(ROOT, ".data");
   const desktop=process.argv.includes("--desktop");
+  const background = desktop && process.argv.includes("--background");
   const control=await DesktopControl.create(ROOT,dataDirectory,port,join(ROOT,".desktop"),desktop);
   delete process.env.KEYMAP_DESKTOP_TOKEN;
-  const api = createApiHandler(new ProfileStore(dataDirectory),undefined,{desktop});
+  const api = createApiHandler(new ProfileStore(dataDirectory),undefined,{desktop,background});
   const vite = production
     ? null
     : await (
@@ -381,8 +398,12 @@ async function main() {
         appType: "spa",
       });
   const server = createServer(async (req, res) => {
-    if(control.handle(req,res,()=>api.desktopStatus(),stop))return;
-    if (await api(req, res)) return;
+    if(control.handle(req,res,()=>api.desktopStatus(),stop,api.beginDesktopShutdown))return;
+    if (await api(req, res)) {
+      // An API operation can start or stop the motor while the last tab is closing.
+      control.browser?.refreshIdleTimeout();
+      return;
+    }
     if (vite) {
       vite.middlewares(req, res);
       return;
@@ -426,13 +447,14 @@ async function main() {
     void stop();
   });
   server.listen(port, "127.0.0.1", () =>{void (async()=>{
-    control.startBrowserSession(stop);
+    control.startBrowserSession(stop, api.canShutdownWithoutTabs);
     await control.publish();api.start();console.log(
       `meu keymap · http://127.0.0.1:${port} · configuração e execução locais`,
     );})().catch(error=>{console.error(error);process.exitCode=1;void stop();});},
   );
   let stopping:Promise<void>|null=null;
   const stop = ():Promise<void> => stopping??=(async()=>{
+    control.browser?.close();
     const httpClosed=new Promise<void>(resolveClose=>server.close(()=>resolveClose()));
     await api.close();
     server.closeAllConnections();

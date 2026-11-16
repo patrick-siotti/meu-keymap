@@ -8,9 +8,11 @@ import { EventDetails } from "./EventDetails";
 import { EntityDialog } from "./EntityDialog";
 import { Modal } from "./Modal";
 import { eventInUse } from "../../lib/profile-references";
+import { useLiveEventStates } from "../hooks/useLiveEventStates";
 interface EventsScreenProps {
   profile: Profile;
   runtime: Runtime;
+  applied: boolean;
   onChange: (profile: Profile) => void;
   onPreview: (eventId: string, stateId: string) => void;
   onAction: (eventId: string, stateId: string, branch: "then" | "else") => void;
@@ -18,6 +20,7 @@ interface EventsScreenProps {
 export function EventsScreen({
   profile,
   runtime,
+  applied,
   onChange,
   onPreview,
   onAction,
@@ -28,6 +31,8 @@ export function EventsScreen({
   const event =
     profile.events.find((e) => e.id === selected) ?? profile.events[0];
   const used = event ? eventInUse(profile, event.id) : false;
+  const liveStates = useLiveEventStates(profile.id, applied && profile.events.length > 0);
+  const currentState = (eventId: string) => liveStates?.[eventId] ?? eventState(profile, runtime, eventId);
   function remove() {
     if (!event || used) return;
     const next = structuredClone(profile);
@@ -74,7 +79,7 @@ export function EventsScreen({
                   {e.states.length} estados ·{" "}
                   {
                     e.states.find(
-                      (s) => s.id === eventState(profile, runtime, e.id),
+                      (s) => s.id === currentState(e.id),
                     )?.name
                   }
                 </small>
@@ -94,7 +99,8 @@ export function EventsScreen({
             key={event.id}
             event={event}
             profile={profile}
-            runtimeState={eventState(profile, runtime, event.id)}
+            runtimeState={currentState(event.id)}
+            liveState={liveStates?.[event.id] !== undefined}
             previewResult={runtime.logs[0] ?? ""}
             onChange={(next) =>
               onChange({

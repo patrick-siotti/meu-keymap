@@ -12,18 +12,13 @@ function selection(value: string) {
 const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
 export function ShortcutBuilder({ value, onChange }: ShortcutBuilderProps) {
-  const [pending, setPending] = useState({ value, modifiers: [] as string[] });
   const [query, setQuery] = useState("");
-  const parsed = selection(value);
-  const selected = parsed.key ? parsed : { key: "", modifiers: pending.value === value ? pending.modifiers : [] };
+  const selected = selection(value);
   const matches = KEY_OPTIONS.filter(option => normalize(`${option.name} ${option.label} ${option.group}`).includes(normalize(query)));
   const current = KEY_OPTIONS.find(option => option.name === selected.key);
   const groups = [...new Set(matches.map(option => option.group))];
   function change(modifiers: string[], key: string) {
-    if (!key) { setPending({ value, modifiers }); return; }
-    const chord = buildChord(modifiers, key);
-    setPending({ value: chord, modifiers: [] });
-    onChange(chord);
+    onChange(key || modifiers.length ? buildChord(modifiers, key) : "");
   }
   return (
     <fieldset className="shortcut-builder">
@@ -45,7 +40,7 @@ export function ShortcutBuilder({ value, onChange }: ShortcutBuilderProps) {
         </label>
         <label className="field">Tecla principal
           <select aria-label="Tecla principal" value={selected.key} onChange={event => change(selected.modifiers, event.target.value)}>
-            <option value="" disabled>Escolha uma tecla</option>
+            <option value="">Sem tecla principal</option>
             {current && !matches.includes(current) && <optgroup label="Selecionada"><option value={current.name}>{current.label}</option></optgroup>}
             {groups.map(group => <optgroup key={group} label={group}>{matches.filter(option => option.group === group).map(option =>
               <option key={option.name} value={option.name}>{option.label}</option>)}</optgroup>)}

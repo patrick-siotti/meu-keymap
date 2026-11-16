@@ -8,6 +8,7 @@ import type { HardwareMap } from "../lib/hardware-map.ts";
 import { equalRgb, parseRgb, rgbRawSchema, staticRgbSchema, staticRgbLayers } from "../lib/rgb.ts";
 import type { RgbLayer, RgbSnapshot, StaticRgbInput } from "../lib/rgb.ts";
 import type { Profile } from "../lib/model.ts";
+import type { ApplicationMode } from "../lib/bindings.ts";
 import type { DeviceEvent } from "../lib/device.ts";
 import type { DeviceConnection } from "./device.ts";
 import { ConfigurationReader, mapFingerprint } from "./configuration.ts";
@@ -37,6 +38,7 @@ export async function deliverCapability(capability:Capability,adapter:{read:()=>
 }
 
 export class ReconciliationService {
+  private onReady?: (map: HardwareMap) => Promise<void>;
   readonly store:DeviceStateStore;
   private phase:ConnectionPhase="disconnected";
   private identity:DeviceIdentity|null=null;
@@ -105,8 +107,9 @@ export class ReconciliationService {
     const differences={bindings:document.desired?.bindings&&document.observed?.bindings?document.observed.bindings.value.entries.filter(entry=>!document.desired!.bindings!.includes(entry.raw.replace(/^03FA/,"03FD"))).length:null,rgbBanks:document.desired?.rgb&&document.observed?.rgb?document.observed.rgb.value.layers.filter((value,index)=>!equalRgb(value,document.desired!.rgb![index]!)).length:null};
     return {...document,capabilities:capabilities(),readStatus:structuredClone(this.readStatus),session:{phase:recovery||document.recovery?"recovery-required":this.phase,generation:this.generation(),identity:this.identity,error:this.error||recovery||"",observedCurrent:this.trustedGeneration===this.generation()},physicalLayer:null,lastObservedLayer:this.layer,differences,physicalOutputPending:"LEDs são cores estáticas gravadas explicitamente. Reconexão, perfis e eventos não gravam RGB. A leitura não confirma saída visível."};
   }
-  start(){
+  start(onReady?: (map: HardwareMap) => Promise<void>){
     if(this.unsubscribe)return;this.closed=false;
+    this.onReady = onReady;
     this.unsubscribe=this.device.observe?.(event=>this.handleEvent(event))??null;
     void this.device.inventory().then(inventory=>this.handleEvent(inventory)).catch(error=>this.fail(String(error)));
   }
@@ -131,6 +134,9 @@ export class ReconciliationService {
         if(current.desired&&!sameDevice(current.desired.identity,this.identity!)){this.fail("O caminho/porta mudou. Aplique explicitamente para vincular este aparelho.");return;}
         if(current.desired&&current.policy.enabled&&this.automaticReapply){const key=`${generation}:${current.desired.revision}`;if(!this.autoAttempted.has(key)){this.autoAttempted.add(key);await this.reconcile(undefined,true);}}
         else if(current.desired){await this.resumeIfConfirmed(current);}
+        const map = current.observed?.bindings?.value;
+        if (!this.closed && this.phase === "ready" && this.trustedGeneration === generation && generation === this.generation() && map)
+          await this.onReady?.(map);
       }catch(error){if(generation===this.generation())this.fail((error as Error).message);}
     });
   }
@@ -161,7 +167,7 @@ export class ReconciliationService {
       }catch(error){this.fail((error as Error).message);throw error;}
     });
   }
-  async chooseBindings(profile:Profile,mode:"device"|"local",packets:string[]):Promise<void>{
+  async chooseBindings(profile:Profile,mode:ApplicationMode,packets:string[]):Promise<void>{
     this.assertNotMaintaining();
     await this.configuration.usb.assertWritable();await this.read(false);
     const state=await this.store.load(),observed=state.observed!;

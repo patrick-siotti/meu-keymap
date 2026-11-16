@@ -12,7 +12,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Falha ao proteger a pasta desktop.' }
 $keymapCompiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 $keymapExe = Join-Path $keymapBin 'MeuKeymap.exe'
 $keymapIcon = Join-Path $keymapRoot 'public/meu-keymap.ico'
-& $keymapCompiler '/nologo' '/target:winexe' '/platform:x64' '/optimize+' '/reference:System.Windows.Forms.dll' '/reference:System.Web.Extensions.dll' "/win32icon:$keymapIcon" "/out:$keymapExe" (Join-Path $PSScriptRoot 'DesktopLauncher.cs')
+& $keymapCompiler '/nologo' '/target:winexe' '/platform:x64' '/optimize+' '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:System.Web.Extensions.dll' "/win32icon:$keymapIcon" "/out:$keymapExe" (Join-Path $PSScriptRoot 'DesktopLauncher.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Falha na compilação do launcher.' }
 $keymapConfig = @{root=$keymapRoot;node=$keymapNode;port=4173;stateDirectory=$keymapState;dataDirectory=(Join-Path $keymapRoot '.data')}
 [IO.File]::WriteAllText((Join-Path $keymapBin 'launcher.json'),($keymapConfig | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
@@ -27,6 +27,6 @@ $keymapShortcut = $keymapShell.CreateShortcut($keymapShortcutPath)
 $keymapShortcut.TargetPath = $keymapExe
 $keymapShortcut.WorkingDirectory = $keymapRoot
 $keymapShortcut.IconLocation = "$keymapIcon,0"
-$keymapShortcut.Description = 'Meu Keymap — navegador normal; última aba fechada encerra em 15 segundos'
+$keymapShortcut.Description = 'Meu Keymap — automações e ícone na área de notificação'
 $keymapShortcut.Save()
 Write-Output "Atalho pronto: $keymapShortcutPath"

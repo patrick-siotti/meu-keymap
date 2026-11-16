@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { profileSchema } from "./model.ts";
+import { APPLICATION_MODES } from "./bindings.ts";
 import { hardwareMapSchema, rawConfigurationSchema } from "./hardware-map.ts";
 import { rgbLayerSchema, rgbRawSchema, rgbSnapshotSchema } from "./rgb.ts";
 
@@ -32,7 +33,7 @@ export function capabilities(): Record<string, Capability> {
 export const desiredSchema = z.object({
   revision: z.number().int().positive(), hash, chosenAt: z.number(),
   profile: profileSchema.nullable(), profileHash: hash.nullable(),
-  mode: z.enum(["device", "local"]), identity: deviceIdentitySchema,
+  mode: z.enum(APPLICATION_MODES), identity: deviceIdentitySchema,
   bindings: z.array(z.string().regex(/^03FD[0-9A-F]{126}$/)).length(75).nullable(),
   rgb: z.array(rgbLayerSchema).length(3).nullable(),
 });

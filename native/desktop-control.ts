@@ -24,7 +24,9 @@ export class DesktopControl {
   private path: string;
   private stopping = false;
   browser:BrowserSession|null=null;
-  startBrowserSession(shutdown:()=>Promise<void>){if(this.identity.mode==="desktop")this.browser??=new BrowserSession(this.identity.port,shutdown);}
+  startBrowserSession(shutdown: () => Promise<void>, canShutdown: () => boolean) {
+    if (this.identity.mode === "desktop") this.browser ??= new BrowserSession(this.identity.port, shutdown, canShutdown);
+  }
   constructor(identity: DesktopIdentity, directory: string, token = randomBytes(32).toString("hex")) {
     if (!/^[a-f0-9]{64}$/.test(token)) throw new Error("Token desktop inválido.");
     this.identity = identity;
@@ -55,7 +57,7 @@ export class DesktopControl {
       if (current.instance === this.identity.instance) await rm(this.path);
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
-  handle(req: IncomingMessage, res: ServerResponse, status: () => unknown, shutdown: () => Promise<void>): boolean {
+  handle(req: IncomingMessage, res: ServerResponse, status: () => unknown, shutdown: () => Promise<void>, beginShutdown: () => boolean = () => true): boolean {
     if(this.browser?.handle(req,res))return true;
     if (!req.url?.startsWith("/api/desktop/")) return false;
     const provided = req.headers["x-keymap-desktop-token"];
@@ -75,6 +77,7 @@ export class DesktopControl {
       this.browser?.opened();send(200,{url:`http://127.0.0.1:${this.identity.port}/`});
     } else if (req.method === "POST" && req.url === "/api/desktop/shutdown") {
       if (this.stopping) send(409, { error: "Encerramento em andamento." });
+      else if (!beginShutdown()) send(409, { error: "Aguarde a operação atual terminar para sair." });
       else {
         this.stopping = true;
         send(202, { instance: this.identity.instance, stopping: true });

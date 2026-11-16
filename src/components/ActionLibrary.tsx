@@ -20,6 +20,7 @@ interface ActionLibraryProps {
   showLabel?: boolean;
   initialLabel?: string;
   mode?: ApplicationMode;
+  allowHeldShortcut?: boolean;
 }
 export function ActionLibrary({
   current,
@@ -29,6 +30,7 @@ export function ActionLibrary({
   showLabel = true,
   initialLabel = "",
   mode,
+  allowHeldShortcut,
 }: ActionLibraryProps) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("Todas");
@@ -74,6 +76,7 @@ export function ActionLibrary({
           showLabel={showLabel}
           initialLabel={initialLabel}
           mode={mode}
+          allowHeldShortcut={allowHeldShortcut}
         />
       ) : (
         <>

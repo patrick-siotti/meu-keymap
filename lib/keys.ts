@@ -67,15 +67,21 @@ export const modifierVirtualKeys: Record<number, number> = Object.fromEntries(MO
 function parseParts(value: string) {
   const normalized = value.replace(/\s*\+\s*/g, "+").trim();
   const plus = normalized.endsWith("++") || normalized === "+";
-  const parts = (plus ? normalized.slice(0, -1) : normalized).split("+").filter(Boolean);
+  const tokens = (plus ? normalized.slice(0, -1) : normalized).split("+");
+  const parts = tokens.filter(Boolean);
   const name = plus ? "+" : parts.pop()?.toUpperCase();
   const mods = parts.map(part => modifiersByName.get(part.toUpperCase()));
   if (!name || mods.some(mod => !mod) || new Set(mods).size !== mods.length) throw new Error(`Atalho inválido: ${value}`);
   const key = keysByName.get(name);
-  if (!key) throw new Error(`Tecla não reconhecida: ${name}`);
   const selected = mods as ModifierOption[];
+  if (!key) {
+    const lastModifier = modifiersByName.get(name);
+    if (!lastModifier) throw new Error(`Tecla não reconhecida: ${name}`);
+    if (tokens.includes("") || selected.includes(lastModifier)) throw new Error(`Atalho inválido: ${value}`);
+    return { key: lastModifier, modifiers: selected, modifierOnly: true };
+  }
   if (key.shift && !selected.some(mod => mod.name === "Shift")) selected.push(MODIFIER_OPTIONS[1]!);
-  return { key, modifiers: selected };
+  return { key, modifiers: selected, modifierOnly: false };
 }
 export function parseChord(value: string): KeyChord {
   const chord = parseParts(value);
@@ -83,10 +89,13 @@ export function parseChord(value: string): KeyChord {
 }
 export function chordSelection(value: string): { modifiers: string[]; key: string } {
   const chord = parseParts(value);
-  return { modifiers: chord.modifiers.map(mod => mod.name), key: chord.key.name };
+  const modifiers = chord.modifiers.map(mod => mod.name);
+  return chord.modifierOnly
+    ? { modifiers: [...modifiers, chord.key.name], key: "" }
+    : { modifiers, key: chord.key.name };
 }
 export function buildChord(modifiers: readonly string[], key: string): string {
-  const value = [...modifiers, key].join("+");
+  const value = (key ? [...modifiers, key] : modifiers).join("+");
   parseChord(value);
   return value;
 }

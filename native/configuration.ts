@@ -8,6 +8,7 @@ import { parseHardwareMap } from "../lib/hardware-map.ts";
 import type { HardwareMap } from "../lib/hardware-map.ts";
 import { UsbCoordinator } from "./usb-coordinator.ts";
 import { exactBindings } from "../lib/bindings-recovery.ts";
+import { bindingPacket, heldVirtualKey } from "../lib/bindings.ts";
 const execute=promisify(execFile);
 export function mapFingerprint(map:HardwareMap):string {
   return createHash("sha256").update(map.devicePath+map.entries.map(e=>e.raw).join("")).digest("hex");
@@ -64,34 +65,95 @@ export class ConfigurationReader {
       const before=await this.perform();
       if(before.protocolVersion!==11)throw new Error("Gravação disponível somente para a versão 11 confirmada do aparelho.");
       if(expected&&expected!==mapFingerprint(before))throw new Error("O aparelho mudou desde a preparação. Leia e prepare o perfil novamente.");
-      const changed=new Map<string,string>(),seen=new Set<string>();
-      for(const packet of packets){
-        if(!/^03FD(?:[0-9A-F]{2}){63}$/.test(packet))throw new Error("Binding inválido.");
-        const slot=parseInt(packet.slice(4,6),16),layer=parseInt(packet.slice(6,8),16),key=`${layer}:${slot}`;
-        const old=before.entries.find(e=>e.slot===slot&&e.layer===layer);
-        if(!old||seen.has(key))throw new Error("Endereço inválido ou duplicado.");seen.add(key);
-        if(old.raw!==packet.slice(0,2)+"FA"+packet.slice(4))changed.set(key,packet);
+      const original = new Map(before.entries.map(entry => [entry.raw.slice(4, 8), entry.raw]));
+      const changed: string[] = [];
+      const seen = new Set<string>();
+      for (const packet of packets) {
+        if (!/^03FD(?:[0-9A-F]{2}){63}$/.test(packet)) throw new Error("Binding inválido.");
+        const address = packet.slice(4, 8);
+        const old = original.get(address);
+        if (!old || seen.has(address)) throw new Error("Endereço inválido ou duplicado.");
+        seen.add(address);
+        if (old !== packet.replace(/^03FD/, "03FA")) changed.push(packet);
       }
-      const verify=(after:HardwareMap,restore=false)=>after.devicePath===before.devicePath&&after.protocolVersion===before.protocolVersion&&before.entries.every(old=>after.entries.find(e=>e.slot===old.slot&&e.layer===old.layer)?.raw===(restore?old.raw:(changed.get(`${old.layer}:${old.slot}`)?.replace(/^03FD/,"03FA")??old.raw)));
-      try{
-        this.usb.assertCurrent();if(changed.size){await this.onWrite?.("sending");this.usb.assertCurrent();await this.transport.write([...changed.values()],before.devicePath,this.usb.signal());await this.onWrite?.("sent");}
-        const after=await this.perform();if(!verify(after))throw new Error("A releitura divergiu do plano gravado.");
-        return {map:after,backup:before.backup,changed:changed.size};
-      }catch(error){
+      if (!changed.length) {
+        const after = await this.perform();
+        if (!exactBindings(after, before)) throw new Error("O aparelho mudou durante a conferência.");
+        return { map: after, backup: before.backup, changed: 0 };
+      }
+      const attempted = new Map<string, Set<string>>();
+      try {
+        await this.onWrite?.("sending");
+        const after = await this.writeChecked(before, changed, (address, raw) => {
+          const states = attempted.get(address) ?? new Set<string>();
+          states.add(raw);
+          attempted.set(address, states);
+        });
+        await this.onWrite?.("sent");
+        return { map: after, backup: before.backup, changed: changed.length };
+      } catch (error) {
+        if (!attempted.size) throw error;
         try{
           this.usb.assertCurrent();
-          const current=await this.perform();
-          if(current.devicePath!==before.devicePath||current.protocolVersion!==before.protocolVersion)throw new Error("Identidade mudou; restauração automática proibida.");
-          // Restore only bytes that are still either the baseline or our own intended bytes.
-          if(current.entries.some(e=>{const old=before.entries.find(b=>b.layer===e.layer&&b.slot===e.slot)!;return e.raw!==old.raw&&e.raw!==changed.get(`${e.layer}:${e.slot}`)?.replace(/^03FD/,"03FA");}))throw new Error("Alteração externa preservada; reconciliação explícita necessária.");
-          const originals=before.entries.filter(e=>changed.has(`${e.layer}:${e.slot}`)).map(e=>e.raw.replace(/^03FA/,"03FD"));
-          if(originals.length)await this.transport.write(originals,before.devicePath,this.usb.signal());
-          if(!verify(await this.perform(),true))throw new Error("Releitura de restauração divergente.");
+          const current = await this.perform();
+          if (current.devicePath !== before.devicePath || current.protocolVersion !== before.protocolVersion) throw new Error("Identidade mudou; restauração automática proibida.");
+          // NULL is an expected intermediate state only for a slot we tried to clear.
+          for (const entry of current.entries) {
+            const address = entry.raw.slice(4, 8);
+            if (entry.raw !== original.get(address) && !attempted.get(address)?.has(entry.raw))
+              throw new Error("Alteração externa preservada; reconciliação explícita necessária.");
+          }
+          const originals = [...attempted.keys()].map(address => original.get(address)!.replace(/^03FA/, "03FD"));
+          const restored = await this.writeChecked(current, originals);
+          if (!exactBindings(restored, before)) throw new Error("Releitura de restauração divergente.");
         }catch(recovery){await this.usb.requireRecovery(`Bindings: ${String(error)}; ${String(recovery)}`,[before.backup]);throw new Error(`Gravação e restauração falharam. Pare de usar e preserve o backup ${before.backup}.`);}
         throw new Error(`Gravação não confirmada; configuração original restaurada e relida. ${(error as Error).message}`);
       }
     });
   }
+
+  private async writeChecked(
+    before: HardwareMap,
+    packets: string[],
+    onAttempt?: (address: string, raw: string) => void,
+  ): Promise<HardwareMap> {
+    const expected = structuredClone(before);
+    const entries = new Map(expected.entries.map(entry => [entry.raw.slice(4, 8), entry]));
+    const send = async (batch: string[]) => {
+      this.usb.assertCurrent();
+      for (const packet of batch) {
+        const address = packet.slice(4, 8);
+        const raw = packet.replace(/^03FD/, "03FA");
+        entries.get(address)!.raw = raw;
+        onAttempt?.(address, raw);
+      }
+      await this.transport.write(batch, before.devicePath, this.usb.signal());
+      const after = await this.perform();
+      if (!exactBindings(after, expected)) throw new Error("A releitura divergiu do plano gravado.");
+      return after;
+    };
+    const remaining: string[] = [];
+    let latest = before;
+    for (const packet of packets) {
+      const entry = entries.get(packet.slice(4, 8))!;
+      const targetType = packet.slice(8, 10);
+      const previousIsHeldKey = heldVirtualKey(entry.raw) !== null;
+      const targetIsHeldKey = heldVirtualKey(packet) !== null;
+      if ((targetType === "02" || ((previousIsHeldKey || targetIsHeldKey) && entry.raw.slice(8, 14) !== packet.slice(8, 14)))
+        && entry.raw !== packet.replace(/^03FD/, "03FA") && packet.slice(12, 14) !== "00") {
+        const clear = bindingPacket(entry.slot, entry.layer, { kind: "none" });
+        if (entry.raw !== clear.replace(/^03FD/, "03FA")) {
+          // Clear stale triplets before switching between media, held keys or pulse formats.
+          await send([clear]);
+          latest = await send([packet]);
+          continue;
+        }
+      }
+      remaining.push(packet);
+    }
+    return remaining.length ? send(remaining) : latest;
+  }
+
   private async perform():Promise<HardwareMap>{
     try{return await this.performRead();}catch(error){this.onReadError?.(error);throw error;}
   }

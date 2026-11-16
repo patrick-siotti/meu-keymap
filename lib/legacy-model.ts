@@ -30,6 +30,7 @@ export const actionSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("shortcut"),
     keys: z.string().trim().min(1).max(100),
+    whileHeld: z.union([z.literal(true), z.object({ mutePlayback: z.literal(true) })]).optional(),
   }),
   z.object({
     kind: z.literal("media"),

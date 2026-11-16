@@ -16,6 +16,7 @@ interface CustomActionFormProps {
   showLabel?: boolean;
   initialLabel?: string;
   mode?: ApplicationMode;
+  allowHeldShortcut?: boolean;
 }
 export function CustomActionForm({
   initial,
@@ -23,6 +24,7 @@ export function CustomActionForm({
   showLabel = true,
   initialLabel = "",
   mode,
+  allowHeldShortcut = false,
 }: CustomActionFormProps) {
   const [kind, setKind] = useState<FormKind>(
       ["shortcut", "text", "macro", "layer", "command"].includes(initial.kind)
@@ -31,6 +33,8 @@ export function CustomActionForm({
     ),
     [label, setLabel] = useState(initialLabel),
     [keys, setKeys] = useState(initial.kind === "shortcut" ? initial.keys : ""),
+    [whileHeld, setWhileHeld] = useState(initial.kind === "shortcut" && !!initial.whileHeld),
+    [mutePlayback, setMutePlayback] = useState(initial.kind === "shortcut" && typeof initial.whileHeld === "object"),
     [text, setText] = useState(initial.kind === "text" ? initial.value : ""),
     [steps, setSteps] = useState(
       initial.kind === "macro"
@@ -57,7 +61,7 @@ export function CustomActionForm({
       kind === "command"
         ? command
         : kind === "shortcut"
-          ? { kind, keys }
+          ? { kind, keys, ...(allowHeldShortcut && whileHeld ? { whileHeld: mutePlayback ? { mutePlayback: true } : true } : {}) }
           : kind === "text"
             ? { kind, value: text }
             : kind === "layer"
@@ -118,7 +122,22 @@ export function CustomActionForm({
         )}
       </div>
       {kind === "shortcut" && (
-        <><ShortcutCapture value={keys} onChange={value=>{setKeys(value);setError("");}} /><p className="shortcut-presentation"><ActionIcon name={actionPresentation({kind:"shortcut",keys}).icon} size={20}/>{keys?actionPresentation({kind:"shortcut",keys}).label:"Atalho de teclado"}</p></>
+        <>
+          <ShortcutCapture value={keys} onChange={value=>{setKeys(value);setError("");}} />
+          <p className="shortcut-presentation"><ActionIcon name={actionPresentation({kind:"shortcut",keys}).icon} size={20}/>{keys?actionPresentation({kind:"shortcut",keys}).label:"Atalho de teclado"}</p>
+          {allowHeldShortcut && (
+            <label className="checkbox-field">
+              <input type="checkbox" checked={whileHeld} onChange={(event) => setWhileHeld(event.target.checked)} />
+              Manter o atalho pressionado até soltar a tecla
+            </label>
+          )}
+          {allowHeldShortcut && whileHeld && (
+            <label className="checkbox-field">
+              <input type="checkbox" checked={mutePlayback} onChange={(event) => setMutePlayback(event.target.checked)} />
+              Silenciar a saída de áudio até soltar a tecla
+            </label>
+          )}
+        </>
       )}
       {kind === "command" && (
         <CommandFields command={command} onChange={setCommand} />
@@ -134,6 +153,7 @@ export function CustomActionForm({
           />
         </label>
       )}
+      {kind === "text" && mode === "device" && <p className="helper">Para digitar texto, escolha Misto ou Automações no Windows.</p>}
       {kind === "macro" && (
         <>
           <label className="field">
@@ -165,7 +185,7 @@ export function CustomActionForm({
             ))}
           </select>
         </label>
-        {mode === "device" && <p className="helper">Trocar camada requer Automações. No modo direto, use o seletor do aparelho.</p>}
+        {mode && mode !== "local" && <p className="helper">Trocar camada por ação exige Automações no Windows. Use o seletor físico nos demais modos.</p>}
         </>
       )}
       {error && (

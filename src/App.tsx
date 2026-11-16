@@ -228,7 +228,7 @@ export function App() {
       setRevision(result.revision);
       setSaved(JSON.stringify(snapshot));
       if(sync&&!sync.applied)setError(sync.error??"Salvo, mas não aplicado no aparelho.");
-      else if(apply)setApplicationFeedback(sync?.mode==="local"?"Perfil aplicado.":"Atalhos aplicados e conferidos.");
+      else if(apply)setApplicationFeedback(sync?.mode==="device"?"Atalhos aplicados e conferidos.":"Perfil aplicado e conferido.");
       else setNotice("Alterações guardadas.");
       await application.refresh();
     } catch (e) {
@@ -406,7 +406,7 @@ export function App() {
         </div>
       )}
       {applicationFeedback&&<div className="application-feedback" role="status"><span>{applicationFeedback}</span><button className="icon-button" aria-label="Fechar confirmação de aplicação" onClick={()=>setApplicationFeedback("")}><X size={16}/></button></div>}
-      {application.status?.deployment?.mode==="local"&&!application.status.runtime.active&&<div className="runtime-notice" role="status"><span>Automações paradas.</span><button className="button" disabled={starting||saving||application.status.busy} onClick={()=>void startApplied()}>{starting?"Iniciando…":"Iniciar automações"}</button></div>}
+      {!!application.status?.deployment?.windowsPositions&&!application.status.runtime.active&&<div className="runtime-notice" role="status"><span>Automações paradas.</span><button className="button" disabled={starting||saving||application.status.busy} onClick={()=>void startApplied()}>{starting?"Iniciando…":"Iniciar automações"}</button></div>}
       {screen === "keys" ? (
         <Configurator
           live={live}
@@ -474,6 +474,7 @@ export function App() {
           key={profile.id}
           profile={profile}
           runtime={runtime}
+          applied={application.applied}
           onChange={updateProfile}
           onPreview={(eventId, stateId) =>
             setRuntime((r) => previewEventState(profile, r, eventId, stateId))
@@ -500,6 +501,7 @@ export function App() {
           current={libraryAction}
           mode={mode}
           custom={library.custom}
+          allowHeldShortcut={library.kind === "rule" && rule?.trigger === "down" && control.kind === "key" && mode !== "device"}
           showLabel={library.kind === "rule" && library.branch==="then" && rule?.trigger==="press"}
           initialLabel={library.kind==="rule"&&usesCustomLabel(control)?control.label:""}
           onSelect={chooseAction}
@@ -534,7 +536,7 @@ export function App() {
         />
       )}
       {help && <Capabilities onClose={() => setHelp(false)} />}
-      {applyOpen&&<ApplyProfileDialog profile={profile} mode={mode} onMode={setMode} onClose={()=>setApplyOpen(false)} onApplied={()=>{setApplyOpen(false);setExecutionOpen(true);void application.refresh();setNotice(mode==="local"?"Perfil aplicado · motor ativo.":"Atalhos aplicados e conferidos no aparelho.");}}/>}
+      {applyOpen&&<ApplyProfileDialog profile={profile} mode={mode} onMode={setMode} onClose={()=>setApplyOpen(false)} onApplied={()=>{setApplyOpen(false);setExecutionOpen(true);void application.refresh();setNotice("Perfil aplicado e conferido.");}}/>}
       {executionOpen&&<ExecutionDialog onClose={()=>setExecutionOpen(false)}/>}
       {verificationOpen&&<VerificationDialog onClose={()=>setVerificationOpen(false)}/>}
       {deviceOpen && (
